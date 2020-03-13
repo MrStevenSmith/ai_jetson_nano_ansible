@@ -1,0 +1,19 @@
+# service name:     jupyter.service 
+# path:             /etc/systemd/jupyter.service
+
+[Unit]
+Description=Jupyter Lab Service
+
+[Service]
+Type=simple
+PIDFile=/run/jupyter.pid
+EnvironmentFile=/home/<<USERNAME>>/.jupyter/env
+ExecStart=/home/<<USERNAME>>/python-envs/ai/bin/jupyter-lab --config=/home/<<USERNAME>>/.jupyter/jupyter_notebook_config.py --no-browser
+User=<<USERNAME>>
+Group=<<USERNAME>>
+WorkingDirectory=/home/<<USERNAME>>/ai
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

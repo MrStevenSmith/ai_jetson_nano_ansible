@@ -1,0 +1,720 @@
+# https://github.com/MrStevenSmith/ai_jetson_nano_ansible
+# Steven Smith
+# v1.0 - 10 March 2020
+
+---
+-
+  name: 'Jetson Nano AI Image'
+  hosts: '{{ host }}'
+  remote_user: '{{ user }}'
+
+  vars:
+
+###
+
+# Modify the below to be the remote host to be configured and the local user on that host which has sudo permissions
+
+    host: jetson_nano
+    user: steven
+
+# If required change NTP settings
+
+    system_timezone: Europe/London
+    ntp_servers:
+      - 0.arch.pool.ntp.org
+      - 1.arch.pool.ntp.org
+      - 2.arch.pool.ntp.org
+      - 3.arch.pool.ntp.org
+    ntp_fallback_servers:
+      - 0.uk.pool.ntp.org
+      - 0.pool.ntp.org
+      - 1.pool.ntp.org
+
+# If require change swapfile location and size
+
+    swap_file_path: /var/swapfile
+    swap_file_size: 6G
+
+###
+
+    packages_apt:
+      - nano
+      - unzip
+      - git
+      - libfreetype6-dev
+      - libpng-dev
+      - libatlas-base-dev
+      - libopenblas-base
+      - libopenblas-dev
+      - cmake
+      - liblapack-dev
+      - libjpeg-dev
+      - gfortran
+      - python3-opencv
+      - pkg-config
+      - libhdf5-100
+      - libhdf5-dev
+      - python3-pip
+      - python3-venv
+    
+    packages_pip:
+      - wheel
+      - pybind11
+      - pillow<7
+      - jupyter
+      - jupyterlab
+
+    packages_pima:
+      - ipython
+      - matplotlib
+      - pandas
+      - rise
+      - scipy
+      - scikit-learn
+      - seaborn
+
+    packages_doorcam:
+      - dlib
+      - face_recognition
+
+    packages_2days:
+      - dialog
+      - libglew-dev
+      - glew-utils
+      - libgstreamer1.0-dev
+      - libgstreamer-plugins-base1.0-dev
+      - libglib2.0-dev
+      - libopencv-calib3d-dev
+      - libopencv-dev
+      - qtbase5-dev
+
+  tasks:
+
+      # Configure NTP
+
+      - name: Set time zone
+        timezone:
+          name: '{{ system_timezone }}'
+        become: yes
+
+      - name: Configure systemd-timesyncd
+        template:
+          src: timesyncd.conf.j2
+          dest: /etc/systemd/timesyncd.conf
+          owner: root
+          group: root
+          mode: 0644
+        register: timesyncd_config
+        become: yes
+
+      - name: Restart systemd-timesyncd
+        service:
+          name: systemd-timesyncd
+          enabled: yes
+          state: restarted
+        when: timesyncd_config.changed
+        become: yes
+
+      # Create swap file
+
+      - name: Set swap file path variable
+        set_fact:
+          swap_file: '{{swap_file_path}}'
+
+      - name: Check if swap file exists
+        stat:
+          path: '{{swap_file}}'
+        register: swap_file_check
+
+      - name: Create swap file
+        command: fallocate -l {{swap_file_size}} {{swap_file}}
+        when: not swap_file_check.stat.exists
+        become: yes
+
+      - name: Change swap file permissions
+        file: path={{swap_file}}
+              owner=root
+              group=root
+              mode=0600
+        become: yes
+
+      - name: Format swap file
+        command: 'mkswap {{swap_file}}'
+        when: not swap_file_check.stat.exists
+        become: yes
+
+      - name: Write swap entry in fstab
+        mount: name=swap
+              src=/var/swapfile
+              fstype=swap
+              opts=sw
+              passno=0
+              dump=0
+              state=present
+        become: yes
+
+      - name: Mount swap file
+        command: swapon -a
+        when: not swap_file_check.stat.exists
+        become: yes
+
+      # Create AI root directories
+
+      - name: Create AI root directory
+        file:
+          path: ~/ai
+          state: directory
+          mode: '0755'
+
+      - name: Create AI hidden directory
+        file:
+          path: ~/.ai
+          state: directory
+          mode: '0755'
+
+      - name: Create ~/ai/datasets directory
+        file:
+          path: ~/ai/datasets
+          state: directory
+          mode: '0755'
+
+      - name: Create ~/ai/notebooks directory
+        file:
+          path: ~/ai/notebooks
+          state: directory
+          mode: '0755'
+
+      # Stop and disable syslog
+
+      - name: Stop and disable syslog
+        service:
+          name: rsyslog
+          state: stopped
+          enabled: no
+        become: yes
+
+      # Update and tidy apt
+
+      - name: Install apt-utils
+        apt:
+          name: apt-utils
+          state: present
+        become: yes
+
+      - name: Run apt update
+        apt:
+          update_cache: yes
+        become: yes
+
+      - name: Run apt upgrade
+        apt:
+          name: '*'
+          state: latest
+        become: yes
+
+      - name: Remove packages that are no longer required
+        apt:
+          autoremove: yes
+        become: yes
+
+      # Install dependencies (apt)
+
+      - name: Install dependencies (apt)
+        apt:
+          name: '{{ packages_apt }}'
+          state: present
+        become: yes
+      
+      # Install dependencies (pip3)
+
+      - name: Install cython (pip3)
+        pip:
+          name: cython
+          virtualenv: ~/python-envs/ai
+          virtualenv_command: /usr/bin/python3.6 -m venv
+
+      - name: Install numpy (pip3)
+        pip:
+          name: numpy
+          virtualenv: ~/python-envs/ai
+          virtualenv_command: /usr/bin/python3.6 -m venv
+
+      - name: Install dependencies (pip3)
+        pip:
+          name: '{{ packages_pip }}'
+          virtualenv: ~/python-envs/ai
+          virtualenv_command: /usr/bin/python3.6 -m venv
+      
+      # Create Jupyter configuration file
+
+      - name: Check if Jupyter configuration file exists
+        stat:
+          path: ~/.jupyter/jupyter_notebook_config.py
+        register: jupyter_config_check
+
+      - name: Generate Jupyter config file
+        command: ~/python-envs/ai/bin/jupyter-notebook --generate-config
+        when: not jupyter_config_check.stat.exists
+
+      # Enable Jupyter to listen on all IP's
+
+      - name: Enable Jupyter to listen on all IP's
+        lineinfile:
+          path: ~/.jupyter/jupyter_notebook_config.py
+          regexp: '^c.NotebookApp.ip'
+          line: c.NotebookApp.ip = '*'
+      
+      # Set Jupyter to listen on port 8888
+
+      - name: Set Jupyter to listen on port 8888
+        lineinfile:
+          path: ~/.jupyter/jupyter_notebook_config.py
+          regexp: '^c.NotebookApp.port'
+          line: c.NotebookApp.port = 8888
+
+      # Set Jupyter password
+
+      - name: Set Jupyter password
+        lineinfile:
+          path: ~/.jupyter/jupyter_notebook_config.py
+          regexp: '^c.NotebookApp.password'
+          line: c.NotebookApp.password = u'sha1:43819219905f:8399d9512c2df00376e1107bd3e3352cf18fc366'
+
+      # Create Jupyter environment file
+
+      - name: Check if Jupyter environment file exists
+        stat:
+          path: ~/.jupyter/env
+        register: jupyter_env_check
+
+      - name: Create Jupyter environment file
+        file:
+          path: ~/.jupyter/env
+          state: touch
+        when: not jupyter_env_check.stat.exists
+
+      # Populate Jupyter environment file
+
+      - name: Set Jupyter environment file PATH variable
+        lineinfile:
+          path: ~/.jupyter/env
+          regexp: '^PATH='
+          line: PATH=~/python-envs/ai/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin:/usr/local/cuda/bin:$PATH
+
+      - name: Set Jupyter environment file LD_LIBRARY_PATH variable
+        lineinfile:
+          path: ~/.jupyter/env
+          regexp: '^LD_LIBRARY_PATH='
+          line: LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/cuda/extras/CUPTI/lib64:$LD_LIBRARY_PATH
+
+      - name: Set Jupyter environment file CUDA_HOME variable
+        lineinfile:
+          path: ~/.jupyter/env
+          regexp: '^CUDA_HOME='
+          line: CUDA_HOME=/usr/local/cuda
+
+      - name: Set Jupyter environment file CUDA_VISIBLE_DEVICES variable
+        lineinfile:
+          path: ~/.jupyter/env
+          regexp: '^CUDA_VISIBLE_DEVICES='
+          line: CUDA_VISIBLE_DEVICES=0
+
+      # Create Jupyter service
+
+      - name: Check if the Jupyter service exists
+        stat:
+          path: /etc/systemd/system/jupyter.service
+        register: jupyter_service
+        become: yes
+
+      - name: Copy jupyter.service to remote host
+        copy:
+          src: jupyter.service
+          dest: /etc/systemd/system/jupyter.service
+          owner: root
+          group: root
+          mode: 0755
+        become: yes
+        when: not jupyter_service.stat.exists
+
+      - name: Replace USERNAME variable in jupyter.service file
+        replace:
+          path: /etc/systemd/system/jupyter.service
+          regexp: '<<USERNAME>>'
+          replace: '{{ user }}'
+        become: yes
+        when: not jupyter_service.stat.exists
+
+      - name: Enable and start jupyter.service
+        service:
+          name: jupyter
+          daemon_reload: yes
+          enabled: yes
+          state: restarted
+        become: yes
+
+      # Enable i2c permissions
+
+      - name: Enable i2c permissions
+        user:
+          name: '{{ user }}'
+          shell: /bin/bash
+          groups: i2c
+          append: yes
+        become: yes
+
+      # Install Pima Indians dependencies
+
+      - name: Install Pima Indians dependencies
+        pip:
+          name: '{{ packages_pima }}'
+          virtualenv: ~/python-envs/ai
+          virtualenv_command: /usr/bin/python3.6 -m venv
+
+      # Install Pima Indians files
+
+      - name: Create ~/ai/datasets/pima-indians-diabetes directory
+        file:
+          path: ~/ai/datasets/pima-indians-diabetes
+          state: directory
+          mode: '0755'
+
+      - name: Copy Pima Indians dataset
+        copy:
+          src: datasets/pima-indians-diabetes/pima-indians-diabetes.csv
+          dest: ~/ai/datasets/pima-indians-diabetes/pima-indians-diabetes.csv
+          owner: '{{ user }}'
+          group: '{{ user }}'
+          mode: 0644
+
+      - name: Copy Pima Indians Jupyter notebook
+        copy:
+          src: notebooks/pima-indians-diabetes.ipynb
+          dest: ~/ai/notebooks/pima-indians-diabetes.ipynb
+          owner: '{{ user }}'
+          group: '{{ user }}'
+          mode: 0644
+
+      # Install doorcam dependencies
+
+      - name: Install doorcam dependencies
+        pip:
+          name: '{{ packages_doorcam }}'
+          virtualenv: ~/python-envs/ai
+          virtualenv_command: /usr/bin/python3.6 -m venv
+
+      # Install doorcam
+
+      - name: Create ~/ai/doorcam directory
+        file:
+          path: ~/ai/doorcam
+          state: directory
+          mode: '0755'
+
+      - name: Download doorcam
+        get_url:
+          url: http://tiny.cc/doorcam
+          dest: ~/ai/doorcam/doorcam.py
+          mode: '0755'
+      
+      # Install PyTorch 1.2.0
+
+      - name: Download PyTorch v1.2.0
+        get_url:
+          url: https://nvidia.box.com/shared/static/06vlvedmqpqstu1dym49fo7aapgfyyu9.whl
+          dest: ~/.ai/torch-1.2.0a0+8554416-cp36-cp36m-linux_aarch64.whl
+
+      - name: Install PyTorch v1.2.0
+        pip:
+          name: ~/.ai/torch-1.2.0a0+8554416-cp36-cp36m-linux_aarch64.whl
+          virtualenv: ~/python-envs/ai
+          virtualenv_command: /usr/bin/python3.6 -m venv
+      
+      # Install TorchVision v0.4.0
+
+      - name: Download TorchVision v0.4.0
+        git:
+          repo: 'https://github.com/pytorch/vision'
+          dest: ~/ai/torchvision
+          version: v0.4.0
+        register: torchvision_clone
+
+      - name: Install TorchVision v0.4.0
+        shell: ~/python-envs/ai/bin/python3 ~/ai/torchvision/setup.py install
+        args:
+          chdir: ~/ai/torchvision
+        when: torchvision_clone.changed
+
+      # Install TensorFlow
+
+      - name: Install TensorFlow
+        pip:
+          name: https://developer.download.nvidia.com/compute/redist/jp/v42/tensorflow-gpu/tensorflow_gpu-2.0.0+nv19.11-cp36-cp36m-linux_aarch64.whl
+          virtualenv: ~/python-envs/ai
+          virtualenv_command: /usr/bin/python3.6 -m venv
+
+      # Install TensorFlow models repository
+
+      - name: Install TensorFlow models repository
+        git:
+          repo: 'https://github.com/tensorflow/models'
+          dest: ~/ai/tensorflow-models
+          version: 5f4d34fc
+
+      - name: Download protoc binary 3.7.1
+        get_url:
+          url: https://github.com/google/protobuf/releases/download/v3.7.1/protoc-3.7.1-linux-aarch_64.zip
+          dest: ~/.ai/protobuf-3.7.1-linux-aarch_64.zip
+
+      - name: Ensure protoc unpack directory exists
+        file:
+          path: ~/.ai/protoc
+          state: directory
+
+      - name: Unarchive protoc 3.7.1 binary
+        unarchive:
+          src: ~/.ai/protobuf-3.7.1-linux-aarch_64.zip
+          dest: ~/.ai/protoc
+          remote_src: true
+
+      - name: Copy protoc binary to /usr/local/bin
+        copy:
+          src: /home/{{ user }}/.ai/protoc/bin/protoc
+          dest: /usr/local/bin/protoc
+          mode: 0755
+          owner: root
+          remote_src: true
+        become: true
+
+      - name: Copy protoc includes to /usr/local/include
+        copy:
+          src: /home/{{ user }}/.ai/protoc/include/google
+          dest: /usr/local/include
+          mode: 0755
+          owner: root
+          remote_src: true
+        become: true
+
+      - name: Set permissions on /usr/local/include/google
+        file:
+          path: /usr/local/include/google
+          mode: 0755
+          owner: root
+          recurse: true
+        become: true
+
+      - name: Check if compiled models file exists
+        stat:
+          path: ~/.ai/tensorflow_model
+        register: tensorflow_model_check
+
+      - name: Compile models
+        shell: 'protoc object_detection/protos/*.proto --python_out=.'
+        args:
+          chdir: ~/ai/tensorflow-models/research
+        when: not tensorflow_model_check.stat.exists
+
+      - name: Create compiled models file file
+        file:
+          path: ~/.ai/tensorflow_model
+          state: touch
+        when: not tensorflow_model_check.stat.exists
+
+      - name: Check if research file exists
+        stat:
+          path: ~/.ai/tensorflow_research
+        register: research_check
+
+      - name: Install research
+        shell: ~/python-envs/ai/bin/python3 ~/ai/tensorflow-models/research/setup.py install
+        args:
+          chdir: ~/ai/tensorflow-models/research
+        when: not research_check.stat.exists
+
+      - name: Create research file
+        file:
+          path: ~/.ai/tensorflow_research
+          state: touch
+        when: not research_check.stat.exists
+
+      - name: Check if slim file exists
+        stat:
+          path: ~/.ai/tensorflow_slim
+        register: slim_check
+
+      - name: Install slim
+        shell: ~/python-envs/ai/bin/python3 ~/ai/tensorflow-models/research/slim/setup.py install
+        args:
+          chdir: ~/ai/tensorflow-models/research/slim
+        when: not slim_check.stat.exists
+
+      - name: Create slim file
+        file:
+          path: ~/.ai/tensorflow_slim
+          state: touch
+        when: not slim_check.stat.exists
+
+      # Download cats_dogs dataset
+
+      - name: Download cats_dogs dataset
+        unarchive:
+          src: https://nvidia.box.com/shared/static/o577zd8yp3lmxf5zhm38svrbrv45am3y.gz
+          dest: ~/ai/datasets
+          remote_src: yes
+
+      # Download PlantCLEF_Subset dataset
+
+      - name: Download PlantCLEF_Subset dataset
+        unarchive:
+          src: https://nvidia.box.com/shared/static/vbsywpw5iqy7r38j78xs0ctalg7jrg79.gz
+          dest: ~/ai/datasets
+          remote_src: yes
+
+      # Install 2 Days to a Demo dependancies
+
+      - name: Install 2 Days to a Demo dependencies (apt)
+        apt:
+          name: '{{ packages_2days }}'
+          state: present
+        become: yes
+
+      # Download 2 Days to a Demo
+
+      - name: Check 2 Days to a Demo file exists
+        stat:
+          path: ~/.ai/2days
+        register: two_days_check
+
+      - name: Download 2 Days to a Demo
+        git:
+          repo: https://github.com/dusty-nv/jetson-inference
+          dest: ~/ai/jetson-inference
+          recursive: yes
+        when: not two_days_check.stat.exists
+
+      - name: Replace Jetson Inference cmake file
+        copy:
+          src: CMakePreBuild.sh
+          dest: ~/ai/jetson-inference/CMakePreBuild.sh
+          owner: '{{ user }}'
+          group: '{{ user }}'
+          mode: 0755
+        when: not two_days_check.stat.exists
+
+      # Build Jetson Inference
+
+      - name: Create 2 Days to a Demo build directory
+        file:
+          path: ~/ai/jetson-inference/build
+          state: directory
+          mode: '0755'
+
+      - name: Configuring 2 Days to a Demo with CMake
+        command: 'cmake ../'
+        args:
+          chdir: '/home/{{ user }}/ai/jetson-inference/build'
+        when: not two_days_check.stat.exists
+        become: yes
+ 
+      - name: 2 Days to a Demo make all
+        make:
+          chdir: '/home/{{ user }}/ai/jetson-inference/build'
+          target: all
+        when: not two_days_check.stat.exists
+        become: yes
+ 
+      - name: 2 Days to a Demo make install
+        make:
+          chdir: '/home/{{ user }}/ai/jetson-inference/build'
+          target: install
+        when: not two_days_check.stat.exists
+        become: yes
+
+      - name: Create 2days file
+        file:
+          path: ~/.ai/2days
+          state: touch
+        when: not two_days_check.stat.exists
+
+      # Download 2 Days to a Demo models
+
+      - name: Download bvlc_googlenet.caffemodel
+        get_url:
+          url: https://nvidia.box.com/shared/static/at8b1105ww1c5h7p30j5ko8qfnxrs0eg.caffemodel
+          dest: ~/ai/jetson-inference/data/networks/bvlc_googlenet.caffemodel
+
+      - name: Download googlenet.prototxt
+        get_url:
+          url: https://nvidia.box.com/shared/static/5z3l76p8ap4n0o6rk7lyasdog9f14gc7.prototxt
+          dest: ~/ai/jetson-inference/data/networks/googlenet.prototxt
+
+      - name: Download googlenet_noprob.prototxt
+        get_url:
+          url: https://nvidia.box.com/shared/static/ue8qrqtglu36andbvobvaaj8egxjaoli.prototxt
+          dest: ~/ai/jetson-inference/data/networks/googlenet_noprob.prototxt
+
+      - name: Download ResNet-18
+        unarchive:
+          src: https://nvidia.box.com/shared/static/gph1qfor89vh498op8cicvwc13zltu3h.gz
+          dest: ~/ai/jetson-inference/data/networks
+          remote_src: yes
+
+      - name: Download SSD-Mobilenet-v2
+        unarchive:
+          src: https://nvidia.box.com/shared/static/jcdewxep8vamzm71zajcovza938lygre.gz
+          dest: ~/ai/jetson-inference/data/networks
+          remote_src: yes
+
+      - name: Download PedNet
+        unarchive:
+          src: https://nvidia.box.com/shared/static/0wbxo6lmxfamm1dk90l8uewmmbpbcffb.gz
+          dest: ~/ai/jetson-inference/data/networks
+          remote_src: yes
+
+      - name: Download FaceNet
+        unarchive:
+          src: https://nvidia.box.com/shared/static/wjitc00ef8j6shjilffibm6r2xxcpigz.gz
+          dest: ~/ai/jetson-inference/data/networks
+          remote_src: yes
+
+      - name: Download DetectNet-COCO-Dog
+        unarchive:
+          src: https://nvidia.box.com/shared/static/3qdg3z5qvl8iwjlds6bw7bwi2laloytu.gz
+          dest: ~/ai/jetson-inference/data/networks
+          remote_src: yes
+
+      - name: Download FCN-ResNet18-Cityscapes-512x256
+        unarchive:
+          src: https://nvidia.box.com/shared/static/k7s7gdgi098309fndm2xbssj553vf71s.gz
+          dest: ~/ai/jetson-inference/data/networks
+          remote_src: yes
+
+      - name: Download FCN-ResNet18-Cityscapes-1024x512
+        unarchive:
+          src: https://nvidia.box.com/shared/static/9aqg4gpjmk7ipz4z0raa5mvs35om6emy.gz
+          dest: ~/ai/jetson-inference/data/networks
+          remote_src: yes
+
+      - name: Download FCN-ResNet18-DeepScene-576x320
+        unarchive:
+          src: https://nvidia.box.com/shared/static/jm0zlezvweiimpzluohg6453s0u0nvcv.gz
+          dest: ~/ai/jetson-inference/data/networks
+          remote_src: yes
+
+      - name: Download FCN-ResNet18-MHP-512x320
+        unarchive:
+          src: https://nvidia.box.com/shared/static/dgaw0ave3bdws1t5ed333ftx5dbpt9zv.gz
+          dest: ~/ai/jetson-inference/data/networks
+          remote_src: yes
+
+      - name: Download FCN-ResNet18-Pascal-VOC-320x320
+        unarchive:
+          src: https://nvidia.box.com/shared/static/p63pgrr6tm33tn23913gq6qvaiarydaj.gz
+          dest: ~/ai/jetson-inference/data/networks
+          remote_src: yes
+
+      - name: Download FCN-ResNet18-SUN-RGBD-512x400
+        unarchive:
+          src: https://nvidia.box.com/shared/static/5vs9t2wah5axav11k8o3l9skb7yy3xgd.gz
+          dest: ~/ai/jetson-inference/data/networks
+          remote_src: yes

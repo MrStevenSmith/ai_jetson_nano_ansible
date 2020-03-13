@@ -1,0 +1,4 @@
+[jetson]
+jetson_nano ansible_host=192.168.21.131 ansible_user=steven
+[jetson:vars]
+ansible_python_interpreter=/usr/bin/python3.6
