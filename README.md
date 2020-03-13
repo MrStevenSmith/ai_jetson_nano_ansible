@@ -41,13 +41,13 @@ git clone https://github.com/MrStevenSmith/ai_jetson_nano_ansible.git ~/_ai_jets
 cd ~/_ai_jetson_nano_ansible
 
 vi inventory
-*Change the IP Address to that of your Jetson Nano and the ansible_user to the user you created during the initial boot*
+# Change the IP Address to that of your Jetson Nano and the ansible_user to the user you created during the initial boot
 
 vi jetson_nano_ansible.yml
-*Change the variable host to the name of your jetson nano configured in the inventory file and the user variable to the user you created during the initial boot*
+# Change the variable host to the name of your jetson nano configured in the inventory file and the user variable to the user you created during the initial boot
 
 sudo ansible-playbook ai_jetson_nano_ansible.yml -i inventory --extra-vars "ansible_sudo_pass=<<sudo_password>>"
-*Change <<sudo_password>> to the password of your sudo user on the jetson nano*
+# Change <<sudo_password>> to the password of your sudo user on the jetson nano
 ```
 
 The script can take over an hour to complete, depending on the speed of your internet connection.
@@ -148,7 +148,6 @@ To change the Jupyter password you must carry out the below.
 ## Authors
 
 * **Steven Smith** - *Modified scripts to create the ansible playbook* - [MrStevenSmith](https://github.com/MrStevenSmith)
-* **NVIDIA** - *Created JetCard script* - [NVIDIA-AI-IOT](https://github.com/NVIDIA-AI-IOT)
 * **Dustin Franklin** - *Created jetson-inference code* - [dusty-nv](https://github.com/dusty-nv)
 * **Adam Geitgey** - *Created the doorcam demo* - [ageitgey](https://gist.github.com/ageitgey)
 * **Andrea Grandi** - *Created the Pima Indians Diabetes Jupyter Notebook* - [andreagrandi](https://github.com/andreagrandi)
