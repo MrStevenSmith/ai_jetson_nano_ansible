@@ -87,6 +87,8 @@
       - libopencv-calib3d-dev
       - libopencv-dev
       - qtbase5-dev
+      - qt5-default
+      - doxygen
 
   tasks:
 
